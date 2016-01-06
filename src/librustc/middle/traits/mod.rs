@@ -416,7 +416,8 @@ pub fn normalize_param_env_or_error<'a,'tcx>(unnormalized_env: ty::ParameterEnvi
            unnormalized_env);
 
     let predicates: Vec<_> =
-        util::elaborate_super_predicates(tcx, unnormalized_env.caller_bounds.clone())
+        if *tcx.collection_finished.borrow() { util::elaborate_predicates(tcx, unnormalized_env.caller_bounds.clone()) }
+        else { util::elaborate_super_predicates(tcx, unnormalized_env.caller_bounds.clone()) }
         .filter(|p| !p.is_global()) // (*)
         .collect();
 
