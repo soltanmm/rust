@@ -220,7 +220,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
                 b: &'v hir::Block, s: Span, id: ast::NodeId) {
         match fk {
             FnKind::ItemFn(..) | FnKind::Method(..) => {
-                let param_env = ty::ParameterEnvironment::for_item(self.tcx, id);
+                let param_env = ty::ParameterEnvironment::for_item(self.tcx, id, true);
                 self.param_envs.push(param_env);
                 intravisit::walk_fn(self, fk, fd, b, s);
                 self.param_envs.pop();

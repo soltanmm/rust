@@ -868,7 +868,7 @@ impl LateLintPass for UnconditionalRecursion {
                     // checking, so it's always local
                     let node_id = tcx.map.as_local_node_id(method.def_id).unwrap();
 
-                    let param_env = ty::ParameterEnvironment::for_item(tcx, node_id);
+                    let param_env = ty::ParameterEnvironment::for_item(tcx, node_id, false);
                     let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, Some(param_env), false);
                     let mut selcx = traits::SelectionContext::new(&infcx);
                     match selcx.select(&obligation) {

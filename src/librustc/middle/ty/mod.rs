@@ -1134,7 +1134,11 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
         }
     }
 
-    pub fn for_item(cx: &'a ctxt<'tcx>, id: NodeId) -> ParameterEnvironment<'a, 'tcx> {
+    pub fn for_item(cx: &'a ctxt<'tcx>,
+                    id: NodeId,
+                    fully_elaborated: bool)
+                    -> ParameterEnvironment<'a, 'tcx>
+    {
         match cx.map.find(id) {
             Some(ast_map::NodeImplItem(ref impl_item)) => {
                 match impl_item.node {
@@ -1148,7 +1152,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(impl_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     hir::ImplItemKind::Const(_, _) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1157,7 +1162,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(impl_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     hir::ImplItemKind::Method(_, ref body) => {
                         let method_def_id = cx.map.local_def_id(id);
@@ -1169,7 +1175,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                     impl_item.span,
                                     method_generics,
                                     method_bounds,
-                                    cx.region_maps.call_site_extent(id, body.id))
+                                    cx.region_maps.call_site_extent(id, body.id),
+                                    fully_elaborated)
                             }
                             _ => {
                                 cx.sess
@@ -1192,7 +1199,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(trait_item.span,
                                                            &trait_def.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     hir::ConstTraitItem(..) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1201,7 +1209,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(trait_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     hir::MethodTraitItem(_, ref body) => {
                         // Use call-site for extent (unless this is a
@@ -1223,7 +1232,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                     trait_item.span,
                                     method_generics,
                                     method_bounds,
-                                    extent)
+                                    extent,
+                                    fully_elaborated)
                             }
                             _ => {
                                 cx.sess
@@ -1247,7 +1257,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                                            &fn_scheme.generics,
                                                            &fn_predicates,
                                                            cx.region_maps.call_site_extent(id,
-                                                                                           body.id))
+                                                                                           body.id),
+                                                           fully_elaborated)
                     }
                     hir::ItemEnum(..) |
                     hir::ItemStruct(..) |
@@ -1260,7 +1271,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     hir::ItemTrait(..) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1269,11 +1281,12 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(item.span,
                                                            &trait_def.generics,
                                                            &predicates,
-                                                           cx.region_maps.item_extent(id))
+                                                           cx.region_maps.item_extent(id),
+                                                           fully_elaborated)
                     }
                     _ => {
                         cx.sess.span_bug(item.span,
-                                         "ParameterEnvironment::from_item():
+                                         "ParameterEnvironment::for_item():
                                           can't create a parameter \
                                           environment for this kind of item")
                     }
@@ -1281,10 +1294,10 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
             }
             Some(ast_map::NodeExpr(..)) => {
                 // This is a convenience to allow closures to work.
-                ParameterEnvironment::for_item(cx, cx.map.get_parent(id))
+                ParameterEnvironment::for_item(cx, cx.map.get_parent(id), fully_elaborated)
             }
             _ => {
-                cx.sess.bug(&format!("ParameterEnvironment::from_item(): \
+                cx.sess.bug(&format!("ParameterEnvironment::for_item(): \
                                      `{}` is not an item",
                                     cx.map.node_to_string(id)))
             }
@@ -2704,7 +2717,8 @@ impl<'tcx> ctxt<'tcx> {
                                                span: Span,
                                                generics: &ty::Generics<'tcx>,
                                                generic_predicates: &ty::GenericPredicates<'tcx>,
-                                               free_id_outlive: CodeExtent)
+                                               free_id_outlive: CodeExtent,
+                                               fully_elaborated: bool)
                                                -> ParameterEnvironment<'a, 'tcx>
     {
         //
@@ -2745,7 +2759,7 @@ impl<'tcx> ctxt<'tcx> {
         };
 
         let cause = traits::ObligationCause::misc(span, free_id_outlive.node_id(&self.region_maps));
-        traits::normalize_param_env_or_error(unnormalized_env, cause)
+        traits::normalize_param_env_or_error(unnormalized_env, cause, fully_elaborated)
     }
 
     pub fn is_method_call(&self, expr_id: NodeId) -> bool {

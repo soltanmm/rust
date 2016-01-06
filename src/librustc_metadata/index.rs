@@ -41,15 +41,15 @@ impl Index {
         let words = bytes_to_words(&bytes[self.data_start..self.data_end]);
         let index = def_index.as_usize();
 
-        debug!("lookup_item: index={:?} words.len={:?}",
-               index, words.len());
+        //debug!("lookup_item: index={:?} words.len={:?}",
+        //       index, words.len());
 
         let position = u32::from_be(words[index]);
         if position == u32::MAX {
             debug!("lookup_item: position=u32::MAX");
             None
         } else {
-            debug!("lookup_item: position={:?}", position);
+            //debug!("lookup_item: position={:?}", position);
             Some(position)
         }
     }

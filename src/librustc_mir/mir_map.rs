@@ -140,7 +140,7 @@ impl<'a, 'm, 'tcx> Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
                 (format!(""), vec![]),
         };
 
-        let param_env = ty::ParameterEnvironment::for_item(self.tcx, id);
+        let param_env = ty::ParameterEnvironment::for_item(self.tcx, id, false);
 
         let infcx = infer::new_infer_ctxt(self.tcx, &self.tcx.tables, Some(param_env), true);
 

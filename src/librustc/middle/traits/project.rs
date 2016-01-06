@@ -486,10 +486,18 @@ fn project_type<'cx,'tcx>(
                                        &obligation_trait_ref,
                                        &mut candidates);
 
+    debug!("project: after assemble from param env; {} candidates, ambiguous={}",
+           candidates.vec.len(),
+           candidates.ambiguous);
+
     assemble_candidates_from_trait_def(selcx,
                                        obligation,
                                        &obligation_trait_ref,
                                        &mut candidates);
+
+    debug!("project: after assemble from trait def; {} candidates, ambiguous={}",
+           candidates.vec.len(),
+           candidates.ambiguous);
 
     if let Err(e) = assemble_candidates_from_impls(selcx,
                                                    obligation,
@@ -498,7 +506,7 @@ fn project_type<'cx,'tcx>(
         return Err(ProjectionTyError::TraitSelectionError(e));
     }
 
-    debug!("{} candidates, ambiguous={}",
+    debug!("project: after assemble from impls; {} candidates, ambiguous={}",
            candidates.vec.len(),
            candidates.ambiguous);
 

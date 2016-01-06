@@ -170,7 +170,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     // Create a parameter environment that represents the implementation's
     // method.
     let impl_m_node_id = tcx.map.as_local_node_id(impl_m.def_id).unwrap();
-    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, impl_m_node_id);
+    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, impl_m_node_id, false);
 
     // Create mapping from impl to skolemized.
     let impl_to_skol_substs = &impl_param_env.free_substs;
@@ -238,7 +238,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     let normalize_cause = traits::ObligationCause::misc(impl_m_span, impl_m_body_id);
     let trait_param_env = impl_param_env.with_caller_bounds(hybrid_preds.into_vec());
     let trait_param_env = traits::normalize_param_env_or_error(trait_param_env,
-                                                               normalize_cause.clone());
+                                                               normalize_cause.clone(), false);
     // FIXME(@jroesch) this seems ugly, but is a temporary change
     infcx.parameter_environment = trait_param_env;
 
@@ -429,7 +429,7 @@ pub fn compare_const_impl<'tcx>(tcx: &ty::ctxt<'tcx>,
     // Create a parameter environment that represents the implementation's
     // method.
     let impl_c_node_id = tcx.map.as_local_node_id(impl_c.def_id).unwrap();
-    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, impl_c_node_id);
+    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, impl_c_node_id, false);
 
     // Create mapping from impl to skolemized.
     let impl_to_skol_substs = &impl_param_env.free_substs;

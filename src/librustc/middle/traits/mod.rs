@@ -390,7 +390,8 @@ pub fn type_known_to_meet_builtin_bound<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
 // FIXME: this is gonna need to be removed ...
 /// Normalizes the parameter environment, reporting errors if they occur.
 pub fn normalize_param_env_or_error<'a,'tcx>(unnormalized_env: ty::ParameterEnvironment<'a,'tcx>,
-                                             cause: ObligationCause<'tcx>)
+                                             cause: ObligationCause<'tcx>,
+                                             fully_elaborated: bool)
                                              -> ty::ParameterEnvironment<'a,'tcx>
 {
     // I'm not wild about reporting errors here; I'd prefer to
@@ -412,11 +413,14 @@ pub fn normalize_param_env_or_error<'a,'tcx>(unnormalized_env: ty::ParameterEnvi
     let span = cause.span;
     let body_id = cause.body_id;
 
-    debug!("normalize_param_env_or_error(unnormalized_env={:?})",
-           unnormalized_env);
+    debug!("normalize_param_env_or_error(unnormalized_env={:?}, fully_elaborated={:?})",
+           unnormalized_env, fully_elaborated);
 
-    let predicates: Vec<_> =
-        util::elaborate_predicates(tcx, unnormalized_env.caller_bounds.clone())
+    let predicates: Vec<_> = if fully_elaborated {
+            util::elaborate_all_predicates(tcx, unnormalized_env.caller_bounds.clone())
+        } else {
+            util::elaborate_predicates(tcx, unnormalized_env.caller_bounds.clone())
+        }
         .filter(|p| !p.is_global()) // (*)
         .collect();
 

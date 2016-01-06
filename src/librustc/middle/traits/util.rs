@@ -80,6 +80,7 @@ pub struct Elaborator<'cx, 'tcx:'cx> {
     tcx: &'cx ty::ctxt<'tcx>,
     stack: Vec<ty::Predicate<'tcx>>,
     visited: PredicateSet<'cx,'tcx>,
+    lookup_fn: fn(&'cx ty::ctxt<'tcx>, DefId) -> ty::GenericPredicates<'tcx>
 }
 
 pub fn elaborate_trait_ref<'cx, 'tcx>(
@@ -108,7 +109,27 @@ pub fn elaborate_predicates<'cx, 'tcx>(
 {
     let mut visited = PredicateSet::new(tcx);
     predicates.retain(|pred| visited.insert(pred));
-    Elaborator { tcx: tcx, stack: predicates, visited: visited }
+    Elaborator {
+        tcx: tcx,
+        stack: predicates,
+        visited: visited,
+        lookup_fn: ty::ctxt::lookup_super_predicates,
+    }
+}
+
+pub fn elaborate_all_predicates<'cx, 'tcx>(
+    tcx: &'cx ty::ctxt<'tcx>,
+    mut predicates: Vec<ty::Predicate<'tcx>>)
+    -> Elaborator<'cx, 'tcx>
+{
+    let mut visited = PredicateSet::new(tcx);
+    predicates.retain(|pred| visited.insert(pred));
+    Elaborator {
+        tcx: tcx,
+        stack: predicates,
+        visited: visited,
+        lookup_fn: ty::ctxt::lookup_predicates,
+    }
 }
 
 impl<'cx, 'tcx> Elaborator<'cx, 'tcx> {
@@ -120,7 +141,7 @@ impl<'cx, 'tcx> Elaborator<'cx, 'tcx> {
         match *predicate {
             ty::Predicate::Trait(ref data) => {
                 // Predicates declared on the trait.
-                let predicates = self.tcx.lookup_super_predicates(data.def_id());
+                let predicates = (self.lookup_fn)(self.tcx, data.def_id());
 
                 let mut predicates: Vec<_> =
                     predicates.predicates

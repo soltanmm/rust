@@ -181,7 +181,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
                            &mut CheckTypeWellFormedVisitor<'ccx,'tcx>) -> Vec<Ty<'tcx>>,
     {
         let ccx = self.ccx;
-        let param_env = ty::ParameterEnvironment::for_item(ccx.tcx, id);
+        let param_env = ty::ParameterEnvironment::for_item(ccx.tcx, id, false);
         let tables = RefCell::new(ty::Tables::empty());
         let inh = Inherited::new(ccx.tcx, &tables, param_env);
         let fcx = blank_fn_ctxt(ccx, &inh, ty::FnDiverging, id);

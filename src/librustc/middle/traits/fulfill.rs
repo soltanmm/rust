@@ -341,6 +341,8 @@ impl<'tcx> FulfillmentContext<'tcx> {
             }
         }
 
+        debug!("select obligations: {:?}, errors: {:?}",
+               self.predicates, errors);
         debug!("select({} obligations, {} errors) done",
                self.predicates.len(),
                errors.len());

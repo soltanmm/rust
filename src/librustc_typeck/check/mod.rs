@@ -302,7 +302,6 @@ impl<'a, 'tcx> Inherited<'a, 'tcx> {
            tables: &'a RefCell<ty::Tables<'tcx>>,
            param_env: ty::ParameterEnvironment<'a, 'tcx>)
            -> Inherited<'a, 'tcx> {
-
         Inherited {
             infcx: infer::new_infer_ctxt(tcx, tables, Some(param_env), true),
             locals: RefCell::new(NodeMap()),
@@ -729,7 +728,7 @@ pub fn check_item_body<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>, it: &'tcx hir::Item) {
     match it.node {
       hir::ItemFn(ref decl, _, _, _, _, ref body) => {
         let fn_pty = ccx.tcx.lookup_item_type(ccx.tcx.map.local_def_id(it.id));
-        let param_env = ParameterEnvironment::for_item(ccx.tcx, it.id);
+        let param_env = ParameterEnvironment::for_item(ccx.tcx, it.id, false);
         check_bare_fn(ccx, &**decl, &**body, it.id, it.span, fn_pty.ty, param_env);
       }
       hir::ItemImpl(_, _, _, _, _, ref impl_items) => {
@@ -852,7 +851,7 @@ fn check_method_body<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                id: ast::NodeId, span: Span) {
     debug!("check_method_body(item_generics={:?}, id={})",
             item_generics, id);
-    let param_env = ParameterEnvironment::for_item(ccx.tcx, id);
+    let param_env = ParameterEnvironment::for_item(ccx.tcx, id, false);
 
     let fty = ccx.tcx.node_id_to_type(id);
     debug!("check_method_body: fty={:?}", fty);

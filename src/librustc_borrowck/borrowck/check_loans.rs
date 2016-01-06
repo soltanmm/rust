@@ -200,7 +200,7 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                      body: &hir::Block) {
     debug!("check_loans(body id={})", body.id);
 
-    let param_env = ty::ParameterEnvironment::for_item(bccx.tcx, fn_id);
+    let param_env = ty::ParameterEnvironment::for_item(bccx.tcx, fn_id, false);
     let infcx = infer::new_infer_ctxt(bccx.tcx, &bccx.tcx.tables, Some(param_env), false);
 
     let mut clcx = CheckLoanCtxt {

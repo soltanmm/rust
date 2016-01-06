@@ -289,7 +289,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                    self_type);
 
             let span = tcx.map.span(impl_node_id);
-            let param_env = ParameterEnvironment::for_item(tcx, impl_node_id);
+            let param_env = ParameterEnvironment::for_item(tcx, impl_node_id, false);
             let self_type = self_type.ty.subst(tcx, &param_env.free_substs);
             assert!(!self_type.has_escaping_regions());
 
@@ -362,7 +362,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                    source, target);
 
             let span = tcx.map.span(impl_node_id);
-            let param_env = ParameterEnvironment::for_item(tcx, impl_node_id);
+            let param_env = ParameterEnvironment::for_item(tcx, impl_node_id, false);
             let source = source.subst(tcx, &param_env.free_substs);
             let target = target.subst(tcx, &param_env.free_substs);
             assert!(!source.has_escaping_regions());

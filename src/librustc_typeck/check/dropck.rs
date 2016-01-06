@@ -82,7 +82,7 @@ fn ensure_drop_params_and_item_params_correspond<'tcx>(
 
     // check that the impl type can be made to match the trait type.
 
-    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, self_type_node_id);
+    let impl_param_env = ty::ParameterEnvironment::for_item(tcx, self_type_node_id, false);
     let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, Some(impl_param_env), true);
 
     let named_type = tcx.lookup_item_type(self_type_did).ty;

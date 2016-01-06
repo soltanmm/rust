@@ -1008,7 +1008,7 @@ fn check_fn(cx: &mut MatchCheckCtxt,
             fn_id: NodeId) {
     match kind {
         FnKind::Closure => {}
-        _ => cx.param_env = ParameterEnvironment::for_item(cx.tcx, fn_id),
+        _ => cx.param_env = ParameterEnvironment::for_item(cx.tcx, fn_id, true),
     }
 
     intravisit::walk_fn(cx, kind, decl, body, sp);

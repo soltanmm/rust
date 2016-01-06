@@ -120,7 +120,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         F: for<'t> FnOnce(&mut euv::ExprUseVisitor<'b, 't, 'b, 'tcx>) -> R,
     {
         let param_env = match item_id {
-            Some(item_id) => ty::ParameterEnvironment::for_item(self.tcx, item_id),
+            Some(item_id) => ty::ParameterEnvironment::for_item(self.tcx, item_id, true),
             None => self.tcx.empty_parameter_environment()
         };
 

@@ -54,7 +54,7 @@ pub fn gather_loans_in_fn<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         move_error_collector: move_error::MoveErrorCollector::new(),
     };
 
-    let param_env = ty::ParameterEnvironment::for_item(bccx.tcx, fn_id);
+    let param_env = ty::ParameterEnvironment::for_item(bccx.tcx, fn_id, false);
     let infcx = infer::new_infer_ctxt(bccx.tcx, &bccx.tcx.tables, Some(param_env), false);
     {
         let mut euv = euv::ExprUseVisitor::new(&mut glcx, &infcx);

@@ -41,7 +41,7 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
                 fn_id: ast::NodeId) {
         {
             // FIXME (@jroesch) change this to be an inference context
-            let param_env = ParameterEnvironment::for_item(self.tcx, fn_id);
+            let param_env = ParameterEnvironment::for_item(self.tcx, fn_id, true);
             let infcx = infer::new_infer_ctxt(self.tcx,
                                               &self.tcx.tables,
                                               Some(param_env.clone()),
