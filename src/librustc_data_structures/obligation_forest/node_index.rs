@@ -9,9 +9,10 @@
 // except according to those terms.
 
 use core::nonzero::NonZero;
+use std::ops::{Add, Sub};
 use std::u32;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NodeIndex {
     index: NonZero<u32>
 }
@@ -26,6 +27,23 @@ impl NodeIndex {
 
     pub fn get(self) -> usize {
         (*self.index - 1) as usize
+    }
+}
+
+impl Add for NodeIndex {
+    type Output = NodeIndex;
+    fn add(self, rhs: NodeIndex) -> NodeIndex {
+        let underlying = self.get() + rhs.get();
+        assert!(underlying > self.get());
+        assert!(underlying > rhs.get());
+        NodeIndex::new(underlying)
+    }
+}
+impl Sub for NodeIndex {
+    type Output = NodeIndex;
+    fn sub(self, rhs: NodeIndex) -> NodeIndex {
+        assert!(self.get() >= rhs.get());
+        NodeIndex::new(self.get() - rhs.get())
     }
 }
 
