@@ -35,7 +35,8 @@ pub use self::error_reporting::report_object_safety_error;
 pub use self::coherence::orphan_check;
 pub use self::coherence::overlapping_impls;
 pub use self::coherence::OrphanCheckErr;
-pub use self::fulfill::{FulfillmentContext, GlobalFulfilledPredicates, RegionObligation};
+pub use self::fulfill::{FulfillmentContext, FulfillmentSnapshot, GlobalFulfilledPredicates,
+                        RegionObligation};
 pub use self::project::MismatchedProjectionTypes;
 pub use self::project::normalize;
 pub use self::project::Normalized;

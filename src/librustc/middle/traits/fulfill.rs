@@ -11,7 +11,8 @@
 use dep_graph::DepGraph;
 use middle::infer::InferCtxt;
 use middle::ty::{self, Ty, TypeFoldable};
-use rustc_data_structures::obligation_forest::{Backtrace, ObligationForest, Error};
+use rustc_data_structures::obligation_forest::{Backtrace, Error, ObligationForest};
+use rustc_data_structures::obligation_forest::Snapshot as ForestSnapshot;
 use std::iter;
 use syntax::ast;
 use util::common::ErrorReported;
@@ -94,6 +95,8 @@ pub struct FulfillmentContext<'tcx> {
     // particular node-id).
     region_obligations: NodeMap<Vec<RegionObligation<'tcx>>>,
 }
+
+pub struct FulfillmentSnapshot(ForestSnapshot);
 
 #[derive(Clone)]
 pub struct RegionObligation<'tcx> {
@@ -310,6 +313,20 @@ impl<'tcx> FulfillmentContext<'tcx> {
         } else {
             Err(errors)
         }
+    }
+
+    // FIXME Perhaps this function (and rollback_to, and commit_from) should not be public if/when
+    // the super all powerful TypeCtxt thing appears.
+    pub fn start_snapshot(&mut self) -> FulfillmentSnapshot {
+        FulfillmentSnapshot(self.predicates.start_snapshot())
+    }
+
+    pub fn rollback_to(&mut self, snapshot: FulfillmentSnapshot) {
+        self.predicates.rollback_snapshot(snapshot.0)
+    }
+
+    pub fn commit_from(&mut self, snapshot: FulfillmentSnapshot) {
+        self.predicates.commit_snapshot(snapshot.0)
     }
 }
 
