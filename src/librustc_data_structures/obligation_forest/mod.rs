@@ -23,6 +23,7 @@ mod node_index;
 #[cfg(test)]
 mod test;
 
+#[derive(Debug)]
 pub struct ObligationForest<O> {
     /// The list of obligations. In between calls to
     /// `process_obligations`, this list only contains nodes in the
@@ -37,15 +38,53 @@ pub struct ObligationForest<O> {
     /// at a higher index than its parent. This is needed by the
     /// backtrace iterator (which uses `split_at`).
     nodes: Vec<Node<O>>,
-    snapshots: Vec<usize>
+    snapshots: Vec<usize>,
+
+    /// List of inversion actions that may be performed to undo mutations
+    /// while in snapshots.
+    undo_log: Vec<UndoAction<O>>,
 }
 
+/// A single inversion of an action on a node in an ObligationForest.
+#[derive(Debug)]
+enum UndoAction<O> {
+    // FIXME potential optimization: store push undos as a count in the snapshots vec (because we
+    // never remove when in a snapshot, and because snapshots are sequenced in a specific way
+    // w.r.t. what's in the ObligationForest's undo list, it's possible to just keep track of push
+    // counts instead of sequencing them in the undo list with node state modifications)
+    UndoPush,
+    UndoModify {
+        at: NodeIndex,
+        undoer: UndoModify<O>,
+    },
+}
+
+/// A single inversion of a node modification action in an ObligationForest.
+#[derive(Debug)]
+enum UndoModify<O> {
+    /// Undoes a transition of a node from pending to error.
+    UndoPendingIntoError {
+        obligation: O,
+    },
+    /// Undoes a transition of a node from successful to error.
+    UndoSuccessIntoError {
+        obligation: O,
+        num_incomplete_children: usize,
+    },
+    /// Undoes a pending node's success; also handles the corresponding num_incomplete_children
+    /// fields' decrements on parents.
+    UndoPendingIntoSuccess,
+}
+
+#[derive(Debug)]
 pub struct Snapshot {
+    /// Length of the 'undo' vector at the time we took the snapshot.
     len: usize,
 }
 
 pub use self::node_index::NodeIndex;
 
+#[derive(Debug)]
 struct Node<O> {
     state: NodeState<O>,
     parent: Option<NodeIndex>,
@@ -68,10 +107,14 @@ enum NodeState<O> {
     ///
     /// Once all children have completed, success nodes are removed
     /// from the vector by the compression step.
+    ///
+    /// Successes with `num_incomplete_children == 0` are always
+    /// immediately reported.
     Success { obligation: O, num_incomplete_children: usize },
 
     /// This obligation was resolved to an error. Error nodes are
-    /// removed from the vector by the compression step.
+    /// removed from the vector by the compression step. Errors
+    /// are always immediately reported.
     Error,
 }
 
@@ -99,11 +142,12 @@ pub struct Error<O,E> {
     pub backtrace: Vec<O>,
 }
 
-impl<O: Debug> ObligationForest<O> {
+impl<O: Clone + Debug> ObligationForest<O> {
     pub fn new() -> ObligationForest<O> {
         ObligationForest {
             nodes: vec![],
-            snapshots: vec![]
+            snapshots: vec![],
+            undo_log: vec![],
         }
     }
 
@@ -114,30 +158,30 @@ impl<O: Debug> ObligationForest<O> {
     }
 
     pub fn start_snapshot(&mut self) -> Snapshot {
-        self.snapshots.push(self.nodes.len());
+        self.snapshots.push(self.undo_log.len());
         Snapshot { len: self.snapshots.len() }
     }
 
     pub fn commit_snapshot(&mut self, snapshot: Snapshot) {
+        // Check that we are obeying stack discipline.
         assert_eq!(snapshot.len, self.snapshots.len());
-        let nodes_len = self.snapshots.pop().unwrap();
-        assert!(self.nodes.len() >= nodes_len);
+        self.snapshots.pop().unwrap();
+        if !self.in_snapshot() {
+            self.undo_log.clear();
+        }
     }
 
     pub fn rollback_snapshot(&mut self, snapshot: Snapshot) {
         // Check that we are obeying stack discipline.
         assert_eq!(snapshot.len, self.snapshots.len());
-        let nodes_len = self.snapshots.pop().unwrap();
+        let undo_len = self.snapshots.pop().unwrap();
 
-        // The only action permitted while in a snapshot is to push
-        // new root obligations. Because no processing will have been
-        // done, those roots should still be in the pending state.
-        debug_assert!(self.nodes[nodes_len..].iter().all(|n| match n.state {
-            NodeState::Pending { .. } => true,
-            _ => false,
-        }));
-
-        self.nodes.truncate(nodes_len);
+        let undoers: Vec<_> = (undo_len..self.undo_log.len())
+            .map(|_| self.undo_log.pop().unwrap())
+            .collect();
+        for undoer in undoers {
+            undoer.undo(self);
+        }
     }
 
     pub fn in_snapshot(&self) -> bool {
@@ -150,13 +194,13 @@ impl<O: Debug> ObligationForest<O> {
     pub fn push_root(&mut self, obligation: O) {
         let index = NodeIndex::new(self.nodes.len());
         self.nodes.push(Node::new(index, None, obligation));
+        if self.in_snapshot() {
+            self.undo_log.push(UndoAction::UndoPush);
+        }
     }
 
     /// Convert all remaining obligations to the given error.
-    ///
-    /// This cannot be done during a snapshot.
     pub fn to_errors<E:Clone>(&mut self, error: E) -> Vec<Error<O,E>> {
-        assert!(!self.in_snapshot());
         let mut errors = vec![];
         for index in 0..self.nodes.len() {
             debug_assert!(!self.nodes[index].is_popped());
@@ -166,8 +210,9 @@ impl<O: Debug> ObligationForest<O> {
                 errors.push(Error { error: error.clone(), backtrace: backtrace });
             }
         }
-        let successful_obligations = self.compress();
-        assert!(successful_obligations.is_empty());
+        if !self.in_snapshot() {
+            self.compress();
+        }
         errors
     }
 
@@ -183,13 +228,10 @@ impl<O: Debug> ObligationForest<O> {
     }
 
     /// Process the obligations.
-    ///
-    /// This CANNOT be unrolled (presently, at least).
     pub fn process_obligations<E,F>(&mut self, mut action: F) -> Outcome<O,E>
         where E: Debug, F: FnMut(&mut O, Backtrace<O>) -> Result<Option<Vec<O>>, E>
     {
         debug!("process_obligations(len={})", self.nodes.len());
-        assert!(!self.in_snapshot()); // cannot unroll this action
 
         let mut errors = vec![];
         let mut stalled = true;
@@ -202,8 +244,15 @@ impl<O: Debug> ObligationForest<O> {
         // and we will find out if any prior node within this forest
         // encountered an error.
 
+        let mut successful_obligations = Vec::new();
         for index in 0..self.nodes.len() {
-            debug_assert!(!self.nodes[index].is_popped());
+            if self.in_snapshot() {
+                if self.nodes[index].is_popped() {
+                    continue;
+                }
+            } else {
+                debug_assert!(!self.nodes[index].is_popped());
+            }
             self.inherit_error(index);
 
             debug!("process_obligations: node {} == {:?}",
@@ -231,7 +280,7 @@ impl<O: Debug> ObligationForest<O> {
                 Ok(Some(children)) => {
                     // if we saw a Some(_) result, we are not (yet) stalled
                     stalled = false;
-                    self.success(index, children);
+                    self.success(index, children, &mut successful_obligations);
                 }
                 Err(err) => {
                     let backtrace = self.backtrace(index);
@@ -240,8 +289,10 @@ impl<O: Debug> ObligationForest<O> {
             }
         }
 
-        // Now we have to compress the result
-        let successful_obligations = self.compress();
+        // Now we compress the result if we're not in a snapshot
+        if !self.in_snapshot() {
+            self.compress();
+        }
 
         debug!("process_obligations: complete");
 
@@ -258,22 +309,10 @@ impl<O: Debug> ObligationForest<O> {
     /// `index` to indicate that a child has completed
     /// successfully. Otherwise, adds new nodes to represent the child
     /// work.
-    fn success(&mut self, index: usize, children: Vec<O>) {
+    fn success(&mut self, index: usize, children: Vec<O>, successful_obligations: &mut Vec<O>) {
         debug!("success(index={}, children={:?})", index, children);
 
         let num_incomplete_children = children.len();
-
-        if num_incomplete_children == 0 {
-            // if there is no work left to be done, decrement parent's ref count
-            self.update_parent(index);
-        } else {
-            // create child work
-            let root_index = self.nodes[index].root;
-            let node_index = NodeIndex::new(index);
-            self.nodes.extend(
-                children.into_iter()
-                        .map(|o| Node::new(root_index, Some(node_index), o)));
-        }
 
         // change state from `Pending` to `Success`, temporarily swapping in `Error`
         let state = mem::replace(&mut self.nodes[index].state, NodeState::Error);
@@ -285,12 +324,39 @@ impl<O: Debug> ObligationForest<O> {
             NodeState::Error =>
                 unreachable!()
         };
+
+        // Potentially add new child work.
+        if num_incomplete_children == 0 {
+            // if there is no work left to be done, decrement parent's ref count
+            self.update_parent(index, successful_obligations);
+        } else {
+            // create child work
+            let root_index = self.nodes[index].root;
+            let node_index = NodeIndex::new(index);
+            self.nodes.extend(
+                children.into_iter()
+                        .map(|o| Node::new(root_index, Some(node_index), o)));
+        }
+
+        if self.in_snapshot() {
+            self.undo_log.extend((0..num_incomplete_children).map(|_| UndoAction::UndoPush));
+            self.undo_log.push(UndoAction::UndoModify {
+                at: NodeIndex::new(index),
+                undoer: UndoModify::UndoPendingIntoSuccess,
+            });
+        }
     }
 
     /// Decrements the ref count on the parent of `child`; if the
     /// parent's ref count then reaches zero, proceeds recursively.
-    fn update_parent(&mut self, child: usize) {
+    fn update_parent(&mut self, child: usize, successful_obligations: &mut Vec<O>) {
         debug!("update_parent(child={})", child);
+        match self.nodes[child].state {
+            NodeState::Success { ref obligation, .. } => {
+                successful_obligations.push(obligation.clone());
+            },
+            _ => unreachable!(),
+        }
         if let Some(parent) = self.nodes[child].parent {
             let parent = parent.get();
             match self.nodes[parent].state {
@@ -302,7 +368,7 @@ impl<O: Debug> ObligationForest<O> {
                 }
                 _ => unreachable!(),
             }
-            self.update_parent(parent);
+            self.update_parent(parent, successful_obligations);
         }
     }
 
@@ -313,7 +379,22 @@ impl<O: Debug> ObligationForest<O> {
     fn inherit_error(&mut self, child: usize) {
         let root = self.nodes[child].root.get();
         if let NodeState::Error = self.nodes[root].state {
-            self.nodes[child].state = NodeState::Error;
+            let old_state = mem::replace(&mut self.nodes[child].state, NodeState::Error);
+            if self.in_snapshot() {
+                self.undo_log.push(UndoAction::UndoModify {
+                    at: NodeIndex::new(child),
+                    undoer: match old_state {
+                        NodeState::Pending { obligation } =>
+                            UndoModify::UndoPendingIntoError { obligation: obligation },
+                        NodeState::Success { obligation, num_incomplete_children } =>
+                            UndoModify::UndoSuccessIntoError {
+                                obligation: obligation,
+                                num_incomplete_children: num_incomplete_children,
+                            },
+                        _ => unreachable!()
+                    }
+                });
+            }
         }
     }
 
@@ -326,19 +407,39 @@ impl<O: Debug> ObligationForest<O> {
         let mut trace = vec![];
         loop {
             let state = mem::replace(&mut self.nodes[p].state, NodeState::Error);
-            match state {
-                NodeState::Pending { obligation } |
-                NodeState::Success { obligation, .. } => {
-                    trace.push(obligation);
-                }
+            let obligation = match state {
+                NodeState::Pending { obligation } => {
+                    if self.in_snapshot() {
+                        self.undo_log.push(UndoAction::UndoModify {
+                            at: NodeIndex::new(p),
+                            undoer: UndoModify::UndoPendingIntoError {
+                                obligation: obligation.clone()
+                            }
+                        });
+                    }
+                    obligation
+                },
+                NodeState::Success { obligation, num_incomplete_children } => {
+                    if self.in_snapshot() {
+                        self.undo_log.push(UndoAction::UndoModify {
+                            at: NodeIndex::new(p),
+                            undoer: UndoModify::UndoSuccessIntoError {
+                                obligation: obligation.clone(),
+                                num_incomplete_children: num_incomplete_children,
+                            }
+                        });
+                    }
+                    obligation
+                },
                 NodeState::Error => {
                     // we should not encounter an error, because if
                     // there was an error in the ancestors, it should
                     // have been propagated down and we should never
                     // have tried to process this obligation
                     panic!("encountered error in node {:?} when collecting stack trace", p);
-                }
-            }
+                },
+            };
+            trace.push(obligation);
 
             // loop to the parent
             match self.nodes[p].parent {
@@ -351,7 +452,7 @@ impl<O: Debug> ObligationForest<O> {
     /// Compresses the vector, removing all popped nodes. This adjusts
     /// the indices and hence invalidates any outstanding
     /// indices. Cannot be used during a transaction.
-    fn compress(&mut self) -> Vec<O> {
+    fn compress(&mut self) {
         assert!(!self.in_snapshot()); // didn't write code to unroll this action
         let mut rewrites: Vec<_> = (0..self.nodes.len()).collect();
 
@@ -380,19 +481,16 @@ impl<O: Debug> ObligationForest<O> {
             }
         }
 
-        // Pop off all the nodes we killed and extract the success
-        // stories.
-        let successful =
-            (0 .. dead).map(|_| self.nodes.pop().unwrap())
-                       .flat_map(|node| match node.state {
-                           NodeState::Error => None,
-                           NodeState::Pending { .. } => unreachable!(),
-                           NodeState::Success { obligation, num_incomplete_children } => {
-                               assert_eq!(num_incomplete_children, 0);
-                               Some(obligation)
-                           }
-                       })
-                       .collect();
+        // Pop off all the nodes we killed.
+        for _ in 0..dead {
+            match self.nodes.pop().unwrap().state {
+                NodeState::Error => { },
+                NodeState::Pending { .. } => unreachable!(),
+                NodeState::Success { num_incomplete_children, .. } => {
+                    assert_eq!(num_incomplete_children, 0);
+                }
+            }
+        }
 
         // Adjust the parent indices, since we compressed things.
         for node in &mut self.nodes {
@@ -404,8 +502,6 @@ impl<O: Debug> ObligationForest<O> {
 
             node.root = NodeIndex::new(rewrites[node.root.get()]);
         }
-
-        successful
     }
 }
 
@@ -457,6 +553,63 @@ impl<'b, O> Iterator for Backtrace<'b, O> {
             }
         } else {
             None
+        }
+    }
+}
+
+impl<O> UndoAction<O> {
+    fn undo(self, forest: &mut ObligationForest<O>) {
+        match self {
+            UndoAction::UndoPush => {
+                forest.nodes.pop().unwrap();
+            },
+            UndoAction::UndoModify { at, undoer } => undoer.undo(forest, at),
+        }
+    }
+}
+
+impl<O> UndoModify<O> {
+    fn undo(self, forest: &mut ObligationForest<O>, at: NodeIndex) {
+        match self {
+            UndoModify::UndoPendingIntoError { obligation } => {
+                mem::replace(
+                    &mut forest.nodes[at.get()].state,
+                    NodeState::Pending { obligation: obligation });
+            },
+            UndoModify::UndoSuccessIntoError { obligation, num_incomplete_children } => {
+                mem::replace(
+                    &mut forest.nodes[at.get()].state,
+                    NodeState::Success { obligation: obligation,
+                                         num_incomplete_children: num_incomplete_children });
+            },
+            UndoModify::UndoPendingIntoSuccess => {
+                // Restore old state
+                let obligation =
+                    match mem::replace(&mut forest.nodes[at.get()].state, NodeState::Error) {
+                        NodeState::Success { obligation, .. } => {
+                            obligation
+                        },
+                        _ => unreachable!()
+                    };
+                mem::replace(&mut forest.nodes[at.get()].state,
+                             NodeState::Pending { obligation: obligation });
+                // Update parents
+                let mut current_node = at;
+                while let Some(next_node) = forest.nodes[current_node.get()].parent {
+                    match &mut forest.nodes[next_node.get()].state {
+                        &mut NodeState::Success { ref mut num_incomplete_children, .. } => {
+                            *num_incomplete_children += 1;
+                            // If `next_node` would not have recursively updated its parent, stop
+                            // recursively un-updating parents.
+                            if *num_incomplete_children > 1 {
+                                break;
+                            }
+                        },
+                        _ => unreachable!()
+                    }
+                    current_node = next_node;
+                }
+            },
         }
     }
 }
