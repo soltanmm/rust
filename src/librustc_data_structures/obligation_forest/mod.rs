@@ -38,25 +38,34 @@ pub struct ObligationForest<O> {
     /// at a higher index than its parent. This is needed by the
     /// backtrace iterator (which uses `split_at`).
     nodes: Vec<Node<O>>,
-    snapshots: Vec<usize>,
 
     /// List of inversion actions that may be performed to undo mutations
     /// while in snapshots.
-    undo_log: Vec<UndoAction<O>>,
+    undo_log: Vec<Action<O>>,
 }
 
 /// A single inversion of an action on a node in an ObligationForest.
 #[derive(Debug)]
-enum UndoAction<O> {
+enum Action<O> {
     // FIXME potential optimization: store push undos as a count in the snapshots vec (because we
     // never remove when in a snapshot, and because snapshots are sequenced in a specific way
     // w.r.t. what's in the ObligationForest's undo list, it's possible to just keep track of push
     // counts instead of sequencing them in the undo list with node state modifications)
-    UndoPush,
-    UndoModify {
+    Push,
+    Modify {
         at: NodeIndex,
         undoer: UndoModify<O>,
     },
+
+    /// An indicator that a snapshot was opened at the actions position; does not have a meaningful
+    /// 'undo' operation on the tree, as any time we're interested in 'undoing' this we're already
+    /// doing so by a user having called `ObligationForest::rollback_snapshot`.
+    OpenSnapshot,
+
+    /// An action that we've left sitting in the queue because it's somehow become a no-op but we
+    /// don't want to deal with O(N) data movement in the log. At present this is always a
+    /// committed snapshot.
+    NoOp,
 }
 
 /// A single inversion of a node modification action in an ObligationForest.
@@ -146,7 +155,6 @@ impl<O: Clone + Debug> ObligationForest<O> {
     pub fn new() -> ObligationForest<O> {
         ObligationForest {
             nodes: vec![],
-            snapshots: vec![],
             undo_log: vec![],
         }
     }
@@ -158,34 +166,65 @@ impl<O: Clone + Debug> ObligationForest<O> {
     }
 
     pub fn start_snapshot(&mut self) -> Snapshot {
-        self.snapshots.push(self.undo_log.len());
-        Snapshot { len: self.snapshots.len() }
+        let result = Snapshot { len: self.undo_log.len() };
+        self.undo_log.push(Action::OpenSnapshot);
+        result
     }
 
     pub fn commit_snapshot(&mut self, snapshot: Snapshot) {
-        // Check that we are obeying stack discipline.
-        assert_eq!(snapshot.len, self.snapshots.len());
-        self.snapshots.pop().unwrap();
+        // Look for the first open snapshot (which MUST be the snapshot passed to us, else
+        // something went wrong).
+        let mut commit_at_index = None;
+        for (index, action) in self.undo_log.iter_mut().enumerate().rev() {
+            commit_at_index = Some(match action {
+                &mut Action::OpenSnapshot => index,
+                _ => continue,
+            });
+            break;
+        }
+        // We should always have a snapshot to commit unless we've broken stack discipline at the
+        // base.
+        let commit_at_index = commit_at_index.unwrap();
+        // Check that we are obeying stack discipline for anywhere that isn't the base.
+        assert_eq!(snapshot.len, commit_at_index);
+        mem::replace(&mut self.undo_log[commit_at_index], Action::NoOp);
         if !self.in_snapshot() {
             self.undo_log.clear();
         }
     }
 
     pub fn rollback_snapshot(&mut self, snapshot: Snapshot) {
-        // Check that we are obeying stack discipline.
-        assert_eq!(snapshot.len, self.snapshots.len());
-        let undo_len = self.snapshots.pop().unwrap();
+        // Look for the first open snapshot (which MUST be the snapshot passed to us, else
+        // something went wrong).
+        let mut rollback_at_index = None;
+        for (index, action) in self.undo_log.iter_mut().enumerate().rev() {
+            rollback_at_index = Some(match action {
+                &mut Action::OpenSnapshot => index,
+                _ => continue,
+            });
+            break;
+        }
+        // We should always have a snapshot to commit unless we've broken stack discipline at the
+        // base.
+        let rollback_at_index = rollback_at_index.unwrap();
+        // Check that we are obeying stack discipline for anywhere that isn't the base.
+        assert_eq!(snapshot.len, rollback_at_index);
 
-        let undoers: Vec<_> = (undo_len..self.undo_log.len())
+        let undo_len = rollback_at_index;
+
+        let actions: Vec<_> = (undo_len..self.undo_log.len())
             .map(|_| self.undo_log.pop().unwrap())
             .collect();
-        for undoer in undoers {
-            undoer.undo(self);
+        for action in actions {
+            action.undo(self);
+        }
+        if !self.in_snapshot() {
+            self.compress();
         }
     }
 
     pub fn in_snapshot(&self) -> bool {
-        !self.snapshots.is_empty()
+        !self.undo_log.is_empty()
     }
 
     /// Adds a new tree to the forest.
@@ -195,7 +234,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
         let index = NodeIndex::new(self.nodes.len());
         self.nodes.push(Node::new(index, None, obligation));
         if self.in_snapshot() {
-            self.undo_log.push(UndoAction::UndoPush);
+            self.undo_log.push(Action::Push);
         }
     }
 
@@ -339,8 +378,8 @@ impl<O: Clone + Debug> ObligationForest<O> {
         }
 
         if self.in_snapshot() {
-            self.undo_log.extend((0..num_incomplete_children).map(|_| UndoAction::UndoPush));
-            self.undo_log.push(UndoAction::UndoModify {
+            self.undo_log.extend((0..num_incomplete_children).map(|_| Action::Push));
+            self.undo_log.push(Action::Modify {
                 at: NodeIndex::new(index),
                 undoer: UndoModify::UndoPendingIntoSuccess,
             });
@@ -381,7 +420,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
         if let NodeState::Error = self.nodes[root].state {
             let old_state = mem::replace(&mut self.nodes[child].state, NodeState::Error);
             if self.in_snapshot() {
-                self.undo_log.push(UndoAction::UndoModify {
+                self.undo_log.push(Action::Modify {
                     at: NodeIndex::new(child),
                     undoer: match old_state {
                         NodeState::Pending { obligation } =>
@@ -410,7 +449,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
             let obligation = match state {
                 NodeState::Pending { obligation } => {
                     if self.in_snapshot() {
-                        self.undo_log.push(UndoAction::UndoModify {
+                        self.undo_log.push(Action::Modify {
                             at: NodeIndex::new(p),
                             undoer: UndoModify::UndoPendingIntoError {
                                 obligation: obligation.clone()
@@ -421,7 +460,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
                 },
                 NodeState::Success { obligation, num_incomplete_children } => {
                     if self.in_snapshot() {
-                        self.undo_log.push(UndoAction::UndoModify {
+                        self.undo_log.push(Action::Modify {
                             at: NodeIndex::new(p),
                             undoer: UndoModify::UndoSuccessIntoError {
                                 obligation: obligation.clone(),
@@ -557,13 +596,15 @@ impl<'b, O> Iterator for Backtrace<'b, O> {
     }
 }
 
-impl<O> UndoAction<O> {
+impl<O> Action<O> {
     fn undo(self, forest: &mut ObligationForest<O>) {
         match self {
-            UndoAction::UndoPush => {
+            Action::Push => {
                 forest.nodes.pop().unwrap();
             },
-            UndoAction::UndoModify { at, undoer } => undoer.undo(forest, at),
+            Action::Modify { at, undoer } => undoer.undo(forest, at),
+            Action::OpenSnapshot => {},
+            Action::NoOp => {},
         }
     }
 }
