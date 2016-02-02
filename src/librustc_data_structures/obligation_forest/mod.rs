@@ -172,7 +172,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
     }
 
     pub fn commit_snapshot(&mut self, snapshot: Snapshot) {
-        // Look for the first open snapshot (which MUST be the snapshot passed to us, else
+        // Look for the most recent open snapshot (which MUST be the snapshot passed to us, else
         // something went wrong).
         let mut commit_at_index = None;
         for (index, action) in self.undo_log.iter_mut().enumerate().rev() {
