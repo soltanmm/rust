@@ -15,6 +15,7 @@
 //! in the first place). See README.md for a general overview of how
 //! to use this class.
 
+use std::cell::RefCell;
 use std::fmt::Debug;
 use std::mem;
 
@@ -121,6 +122,10 @@ enum NodeState<O> {
     /// immediately reported.
     Success { obligation: O, num_incomplete_children: usize },
 
+    /// Obligation is currently being processed (e.g. in an earlier
+    /// stack frame).
+    Active { obligation: O },
+
     /// This obligation was resolved to an error. Error nodes are
     /// removed from the vector by the compression step. Errors
     /// are always immediately reported.
@@ -173,18 +178,9 @@ impl<O: Clone + Debug> ObligationForest<O> {
 
     pub fn commit_snapshot(&mut self, snapshot: Snapshot) {
         // Look for the most recent open snapshot (which MUST be the snapshot passed to us, else
-        // something went wrong).
-        let mut commit_at_index = None;
-        for (index, action) in self.undo_log.iter_mut().enumerate().rev() {
-            commit_at_index = Some(match action {
-                &mut Action::OpenSnapshot => index,
-                _ => continue,
-            });
-            break;
-        }
-        // We should always have a snapshot to commit unless we've broken stack discipline at the
-        // base.
-        let commit_at_index = commit_at_index.unwrap();
+        // something went wrong). We should always have a snapshot to commit unless we've broken
+        // stack discipline at the base.
+        let commit_at_index = self.current_snapshot_log_index().unwrap();
         // Check that we are obeying stack discipline for anywhere that isn't the base.
         assert_eq!(snapshot.len, commit_at_index);
         mem::replace(&mut self.undo_log[commit_at_index], Action::NoOp);
@@ -195,18 +191,9 @@ impl<O: Clone + Debug> ObligationForest<O> {
 
     pub fn rollback_snapshot(&mut self, snapshot: Snapshot) {
         // Look for the first open snapshot (which MUST be the snapshot passed to us, else
-        // something went wrong).
-        let mut rollback_at_index = None;
-        for (index, action) in self.undo_log.iter_mut().enumerate().rev() {
-            rollback_at_index = Some(match action {
-                &mut Action::OpenSnapshot => index,
-                _ => continue,
-            });
-            break;
-        }
-        // We should always have a snapshot to commit unless we've broken stack discipline at the
-        // base.
-        let rollback_at_index = rollback_at_index.unwrap();
+        // something went wrong). We should always have a snapshot to commit unless we've broken
+        // stack discipline at the base.
+        let rollback_at_index = self.current_snapshot_log_index().unwrap();
         // Check that we are obeying stack discipline for anywhere that isn't the base.
         assert_eq!(snapshot.len, rollback_at_index);
 
@@ -266,6 +253,35 @@ impl<O: Clone + Debug> ObligationForest<O> {
                   .collect()
     }
 
+    pub fn iter_process_obligations<E, F>(this: &RefCell<Self>, action: F)
+        -> ObligationsProcessor<O, E, F>
+        where E: Debug, F: FnMut(&mut O, BacktraceRefCell<O>) -> Result<Option<Vec<O>>, E>
+    {
+        ObligationsProcessor {
+            forest: this,
+            action: action,
+            index: Some(0),
+            max_index: Some(this.borrow().nodes.len()),
+            snapshot: this.borrow().current_snapshot_log_index().map(|x| Snapshot { len: x })
+        }
+    }
+
+    pub fn process_obligations_external<E, F>(this: &RefCell<Self>, action: F)
+        -> Outcome<O, E>
+        where E: Debug, F: FnMut(&mut O, BacktraceRefCell<O>) -> Result<Option<Vec<O>>, E>
+    {
+        ObligationForest::iter_process_obligations(this, action)
+            .fold(
+                Outcome { completed: Vec::new(), errors: Vec::new(), stalled: true },
+                |mut result, outcome| {
+                    let Outcome { completed, errors, stalled } = outcome;
+                    result.completed.extend(completed);
+                    result.errors.extend(errors);
+                    result.stalled = result.stalled && stalled;
+                    result
+                })
+    }
+
     /// Process the obligations.
     pub fn process_obligations<E,F>(&mut self, mut action: F) -> Outcome<O,E>
         where E: Debug, F: FnMut(&mut O, Backtrace<O>) -> Result<Option<Vec<O>>, E>
@@ -302,6 +318,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
                 let (prefix, suffix) = self.nodes.split_at_mut(index);
                 let backtrace = Backtrace::new(prefix, parent);
                 match suffix[0].state {
+                    NodeState::Active { .. } |
                     NodeState::Error |
                     NodeState::Success { .. } =>
                         continue,
@@ -342,6 +359,18 @@ impl<O: Clone + Debug> ObligationForest<O> {
         }
     }
 
+    fn current_snapshot_log_index(&self) -> Option<usize> {
+        let mut snapshot_index = None;
+        for (index, action) in self.undo_log.iter().enumerate().rev() {
+            snapshot_index = Some(match action {
+                &Action::OpenSnapshot => index,
+                _ => continue,
+            });
+            break;
+        }
+        snapshot_index
+    }
+
     /// Indicates that node `index` has been processed successfully,
     /// yielding `children` as the derivative work. If children is an
     /// empty vector, this will update the ref count on the parent of
@@ -356,6 +385,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
         // change state from `Pending` to `Success`, temporarily swapping in `Error`
         let state = mem::replace(&mut self.nodes[index].state, NodeState::Error);
         self.nodes[index].state = match state {
+            NodeState::Active { obligation } |
             NodeState::Pending { obligation } =>
                 NodeState::Success { obligation: obligation,
                                      num_incomplete_children: num_incomplete_children },
@@ -447,6 +477,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
         loop {
             let state = mem::replace(&mut self.nodes[p].state, NodeState::Error);
             let obligation = match state {
+                NodeState::Active { obligation } |
                 NodeState::Pending { obligation } => {
                     if self.in_snapshot() {
                         self.undo_log.push(Action::Modify {
@@ -524,6 +555,7 @@ impl<O: Clone + Debug> ObligationForest<O> {
         for _ in 0..dead {
             match self.nodes.pop().unwrap().state {
                 NodeState::Error => { },
+                NodeState::Active { .. } |
                 NodeState::Pending { .. } => unreachable!(),
                 NodeState::Success { num_incomplete_children, .. } => {
                     assert_eq!(num_incomplete_children, 0);
@@ -555,9 +587,177 @@ impl<O> Node<O> {
 
     fn is_popped(&self) -> bool {
         match self.state {
+            NodeState::Active { .. } |
             NodeState::Pending { .. } => false,
             NodeState::Success { num_incomplete_children, .. } => num_incomplete_children == 0,
             NodeState::Error => true,
+        }
+    }
+    fn is_active(&self) -> bool {
+        match self.state {
+            NodeState::Active { .. } => true,
+            _ => false,
+        }
+    }
+    fn is_pending(&self) -> bool {
+        match self.state {
+            NodeState::Pending { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+pub struct ObligationsProcessor<'forest, O: 'forest, E, F>
+    where
+        F: FnMut(&mut O, BacktraceRefCell<O>) -> Result<Option<Vec<O>>, E>,
+        O: Debug + Clone,
+{
+    forest: &'forest RefCell<ObligationForest<O>>,
+    action: F,
+    index: Option<usize>,
+    /// The max (not inclusive) index we're allowed to iterate over.
+    max_index: Option<usize>,
+    snapshot: Option<Snapshot>,
+}
+
+impl<'forest, O: 'forest, E, F> Drop for ObligationsProcessor<'forest, O, E, F>
+    where
+        F: FnMut(&mut O, BacktraceRefCell<O>) -> Result<Option<Vec<O>>, E>,
+        O: Debug + Clone,
+{
+    fn drop(&mut self) {
+        let mut forest = self.forest.borrow_mut();
+        if !forest.in_snapshot() {
+            forest.compress();
+        }
+    }
+}
+
+impl<'forest, O: 'forest, E, F> Iterator for ObligationsProcessor<'forest, O, E, F>
+    where
+        F: FnMut(&mut O, BacktraceRefCell<O>) -> Result<Option<Vec<O>>, E>,
+        O: Debug + Clone,
+{
+    type Item = Outcome<O, E>;
+    fn next(&mut self) -> Option<Self::Item> {
+        println!("index: {:?} < {:?} , {:?}\n", self.index, self.max_index, self.forest.borrow());
+        if self.index == None {
+            return None;
+        }
+        // Begin pre-action forest borrow block
+        let (mut obligation, backtrace, index) = {
+            let mut forest = self.forest.borrow_mut();
+            let mut index = self.index.unwrap();
+            let max_index = if let Some(max_index) = self.max_index {
+                assert!(max_index <= forest.nodes.len());
+                max_index
+            } else {
+                forest.nodes.len()
+            };
+            loop {
+                if forest.in_snapshot() {
+                    if forest.nodes[index].is_popped() || forest.nodes[index].is_active() {
+                        continue;
+                    }
+                } else {
+                    debug_assert!(!forest.nodes[index].is_popped());
+                }
+                forest.inherit_error(index);
+                if forest.nodes[index].is_pending() {
+                    break;
+                }
+                index += 1;
+                if index >= max_index {
+                    self.index = None;
+                    return None;
+                }
+            }
+            self.index = if index + 1 >= max_index { None } else { Some(index + 1) };
+                let (activated, obligation) =
+                    match mem::replace(&mut forest.nodes[index].state, NodeState::Error) {
+                        NodeState::Pending { obligation } => {
+                            let cloned_obligation = obligation.clone();
+                            (NodeState::Active { obligation: obligation }, cloned_obligation)
+                        },
+                        _ => unreachable!(),
+                    };
+            mem::replace(&mut forest.nodes[index].state, activated);
+            (obligation, BacktraceRefCell::new(self.forest, forest.nodes[index].parent), index)
+        };
+        // End pre-action forest borrow block
+
+        let action_result = (self.action)(&mut obligation, backtrace);
+
+        let mut successful_obligations = Vec::new();
+        let mut errors = Vec::new();
+        let mut stalled = true;
+
+        // Begin post-action forest borrow block
+        {
+            let mut forest = self.forest.borrow_mut();
+            // Update the possibly mutated obligation
+            mem::replace(&mut forest.nodes[index].state,
+                         NodeState::Pending { obligation: obligation });
+            match action_result {
+                Ok(None) => {
+                    // no change in state
+                }
+                Ok(Some(children)) => {
+                    // if we saw a Some(_) result, we are not (yet) stalled
+                    stalled = false;
+                    forest.success(index, children, &mut successful_obligations);
+                }
+                Err(err) => {
+                    let backtrace = forest.backtrace(index);
+                    errors.push(Error { error: err, backtrace: backtrace });
+                }
+            }
+        }
+        // End post-action forest borrow block
+
+        debug!("process_obligations: complete");
+        Some(Outcome {
+            completed: successful_obligations,
+            errors: errors,
+            stalled: stalled,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct BacktraceRefCell<'b, O: 'b> {
+    forest: &'b RefCell<ObligationForest<O>>,
+    pointer: Option<NodeIndex>,
+}
+
+impl<'b, O> BacktraceRefCell<'b, O> {
+    fn new(forest: &'b RefCell<ObligationForest<O>>, pointer: Option<NodeIndex>)
+        -> BacktraceRefCell<'b, O>
+    {
+        BacktraceRefCell { forest: forest, pointer: pointer }
+    }
+}
+
+impl<'b, O: Clone> Iterator for BacktraceRefCell<'b, O> {
+    type Item = O;
+
+    fn next(&mut self) -> Option<O> {
+        debug!("Backtrace: self.pointer = {:?}", self.pointer);
+        let forest = self.forest.borrow();
+        if let Some(p) = self.pointer {
+            self.pointer = forest.nodes[p.get()].parent;
+            match forest.nodes[p.get()].state {
+                NodeState::Active { ref obligation } |
+                NodeState::Pending { ref obligation } |
+                NodeState::Success { ref obligation, .. } => {
+                    Some(obligation.clone())
+                }
+                NodeState::Error => {
+                    panic!("Backtrace encountered an error.");
+                }
+            }
+        } else {
+            None
         }
     }
 }
@@ -569,7 +769,9 @@ pub struct Backtrace<'b, O: 'b> {
 }
 
 impl<'b, O> Backtrace<'b, O> {
-    fn new(nodes: &'b [Node<O>], pointer: Option<NodeIndex>) -> Backtrace<'b, O> {
+    fn new(nodes: &'b [Node<O>], pointer: Option<NodeIndex>)
+        -> Backtrace<'b, O>
+    {
         Backtrace { nodes: nodes, pointer: pointer }
     }
 }
@@ -582,6 +784,7 @@ impl<'b, O> Iterator for Backtrace<'b, O> {
         if let Some(p) = self.pointer {
             self.pointer = self.nodes[p.get()].parent;
             match self.nodes[p.get()].state {
+                NodeState::Active { ref obligation } |
                 NodeState::Pending { ref obligation } |
                 NodeState::Success { ref obligation, .. } => {
                     Some(obligation)

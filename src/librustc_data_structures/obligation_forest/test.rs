@@ -8,10 +8,87 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
 use super::{ObligationForest, Outcome, Error};
+
+#[test]
+fn push_pop_ref_cell() {
+    let forest = RefCell::new(ObligationForest::new());
+    forest.borrow_mut().push_root("A");
+    forest.borrow_mut().push_root("B");
+    forest.borrow_mut().push_root("C");
+
+    // first round, B errors out, A has subtasks, and C completes, creating this:
+    //      A |-> A.1
+    //        |-> A.2
+    //        |-> A.3
+    let Outcome { completed: ok, errors: err, .. } =
+        ObligationForest::process_obligations_external(&forest, |obligation, _| {
+            match *obligation {
+                "A" => Ok(Some(vec!["A.1", "A.2", "A.3"])),
+                "B" => Err("B is for broken"),
+                "C" => Ok(Some(vec![])),
+                _ => panic!("unexpected obligation {:?}", obligation),
+            }
+        });
+    assert_eq!(ok, vec!["C"]);
+    assert_eq!(err, vec![Error {error: "B is for broken",
+                                backtrace: vec!["B"]}]);
+
+    // second round: two delays, one success, creating an uneven set of subtasks:
+    //      A |-> A.1
+    //        |-> A.2
+    //        |-> A.3 |-> A.3.i
+    //      D |-> D.1
+    //        |-> D.2
+    forest.borrow_mut().push_root("D");
+    let Outcome { completed: ok, errors: err, .. }: Outcome<&'static str, ()> =
+        ObligationForest::process_obligations_external(&forest, |obligation, _| {
+            match *obligation {
+                "A.1" => Ok(None),
+                "A.2" => Ok(None),
+                "A.3" => Ok(Some(vec!["A.3.i"])),
+                "D" => Ok(Some(vec!["D.1", "D.2"])),
+                _ => panic!("unexpected obligation {:?}", obligation),
+            }
+        });
+    assert_eq!(ok, Vec::<&'static str>::new());
+    assert_eq!(err, Vec::new());
+
+
+    // third round: ok in A.1 but trigger an error in A.2. Check that it
+    // propagates to A.3.i, but not D.1 or D.2.
+    //      D |-> D.1 |-> D.1.i
+    //        |-> D.2 |-> D.2.i
+    let Outcome { completed: ok, errors: err, .. } =
+        ObligationForest::process_obligations_external(&forest, |obligation, _| {
+            match *obligation {
+                "A.1" => Ok(Some(vec![])),
+                "A.2" => Err("A is for apple"),
+                "D.1" => Ok(Some(vec!["D.1.i"])),
+                "D.2" => Ok(Some(vec!["D.2.i"])),
+                _ => panic!("unexpected obligation {:?}", obligation),
+            }
+        });
+    assert_eq!(ok, vec!["A.1"]);
+    assert_eq!(err, vec![Error { error: "A is for apple",
+                                 backtrace: vec!["A.2", "A"] }]);
+
+    // fourth round: error in D.1.i that should propagate to D.2.i
+    let Outcome { completed: ok, errors: err, .. } =
+        ObligationForest::process_obligations_external(&forest, |obligation, _| {
+            match *obligation {
+                "D.1.i" => Err("D is for dumb"),
+                _ => panic!("unexpected obligation {:?}", obligation),
+            }
+        });
+    assert_eq!(ok, Vec::<&'static str>::new());
+    assert_eq!(err, vec![Error { error: "D is for dumb",
+                                 backtrace: vec!["D.1.i", "D.1", "D"] }]);
+}
 
 
 #[test]
