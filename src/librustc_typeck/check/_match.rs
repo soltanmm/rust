@@ -493,11 +493,11 @@ pub fn check_match<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     //
     // The result of the match is the common supertype of all the
     // arms. Start out the value as bottom, since it's the, well,
-    // bottom the type lattice, and we'll be moving up the lattice as
+    // bottom of the type lattice, and we'll be moving up the lattice as
     // we process each arm. (Note that any match with 0 arms is matching
     // on any empty type and is therefore unreachable; should the flow
     // of execution reach it, we will panic, so bottom is an appropriate
-    // type in that case)
+    // type in that case).
     let expected = expected.adjust_for_branches(fcx);
     let result_ty = arms.iter().fold(fcx.infcx().next_diverging_ty_var(), |result_ty, arm| {
         let bty = match expected {
