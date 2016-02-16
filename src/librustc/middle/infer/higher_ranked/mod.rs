@@ -11,12 +11,14 @@
 //! Helper routines for higher-ranked things. See the `doc` module at
 //! the end of the file for details.
 
+use std::mem;
+
 use super::{CombinedSnapshot, InferCtxt, HigherRankedType, SkolemizationMap};
 use super::combine::CombineFields;
 
 use middle::ty::{self, Binder, TypeFoldable};
 use middle::ty::error::TypeError;
-use middle::ty::relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::relate::{Relate, RelateOk, RelateResult, TypeRelation};
 use syntax::codemap::Span;
 use util::nodemap::{FnvHashMap, FnvHashSet};
 
@@ -97,7 +99,7 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
             debug!("higher_ranked_sub: OK result={:?}",
                    result);
 
-            Ok(ty::Binder(result))
+            Ok(RelateOk { value: ty::Binder(result.value), obligations: result.obligations })
         });
     }
 
@@ -117,10 +119,11 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
                     span, HigherRankedType, b);
 
             // Collect constraints.
-            let result0 =
+            let mut result0 =
                 try!(self.lub().relate(&a_with_fresh, &b_with_fresh));
+            let obligations = mem::replace(&mut result0.obligations, Vec::new());
             let result0 =
-                self.infcx.resolve_type_vars_if_possible(&result0);
+                self.infcx.resolve_type_vars_if_possible(&result0.value);
             debug!("lub result0 = {:?}", result0);
 
             // Generalize the regions appearing in result0 if possible
@@ -138,7 +141,7 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
                    b,
                    result1);
 
-            Ok(ty::Binder(result1))
+            Ok(RelateOk { value: ty::Binder(result1), obligations: obligations })
         });
 
         fn generalize_region(infcx: &InferCtxt,
@@ -211,10 +214,11 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
             let b_vars = var_ids(self, &b_map);
 
             // Collect constraints.
-            let result0 =
+            let mut result0 =
                 try!(self.glb().relate(&a_with_fresh, &b_with_fresh));
+            let obligations = mem::replace(&mut result0.obligations, Vec::new());
             let result0 =
-                self.infcx.resolve_type_vars_if_possible(&result0);
+                self.infcx.resolve_type_vars_if_possible(&result0.value);
             debug!("glb result0 = {:?}", result0);
 
             // Generalize the regions appearing in result0 if possible
@@ -234,7 +238,7 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
                    b,
                    result1);
 
-            Ok(ty::Binder(result1))
+            Ok(RelateOk{ value: ty::Binder(result1), obligations: obligations })
         });
 
         fn generalize_region(infcx: &InferCtxt,

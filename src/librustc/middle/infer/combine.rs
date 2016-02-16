@@ -32,6 +32,8 @@
 // is also useful to track which value is the "expected" value in
 // terms of error reporting.
 
+use std::mem;
+
 use super::bivariate::Bivariate;
 use super::equate::Equate;
 use super::glb::Glb;
@@ -41,11 +43,13 @@ use super::{InferCtxt};
 use super::{MiscVariable, TypeTrace};
 use super::type_variable::{RelationDir, BiTo, EqTo, SubtypeOf, SupertypeOf};
 
+use middle::traits;
+
 use middle::ty::{IntType, UintType};
 use middle::ty::{self, Ty};
 use middle::ty::error::TypeError;
 use middle::ty::fold::{TypeFolder, TypeFoldable};
-use middle::ty::relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::relate::{Relate, RelateOk, RelateResult, TypeRelation};
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -74,7 +78,7 @@ pub fn super_combine_tys<'a,'tcx:'a,R>(infcx: &InferCtxt<'a, 'tcx>,
                       .borrow_mut()
                       .unify_var_var(a_id, b_id)
                       .map_err(|e| int_unification_error(a_is_expected, e)));
-            Ok(a)
+            Ok(RelateOk { value: a, obligations: Vec::new() })
         }
         (&ty::TyInfer(ty::IntVar(v_id)), &ty::TyInt(v)) => {
             unify_integral_variable(infcx, a_is_expected, v_id, IntType(v))
@@ -95,7 +99,7 @@ pub fn super_combine_tys<'a,'tcx:'a,R>(infcx: &InferCtxt<'a, 'tcx>,
                       .borrow_mut()
                       .unify_var_var(a_id, b_id)
                       .map_err(|e| float_unification_error(relation.a_is_expected(), e)));
-            Ok(a)
+            Ok(RelateOk { value: a, obligations: Vec::new() })
         }
         (&ty::TyInfer(ty::FloatVar(v_id)), &ty::TyFloat(v)) => {
             unify_float_variable(infcx, a_is_expected, v_id, v)
@@ -129,8 +133,8 @@ fn unify_integral_variable<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
          .unify_var_value(vid, val)
          .map_err(|e| int_unification_error(vid_is_expected, e)));
     match val {
-        IntType(v) => Ok(infcx.tcx.mk_mach_int(v)),
-        UintType(v) => Ok(infcx.tcx.mk_mach_uint(v)),
+        IntType(v) => Ok(RelateOk { value: infcx.tcx.mk_mach_int(v), obligations: Vec::new() }),
+        UintType(v) => Ok(RelateOk { value: infcx.tcx.mk_mach_uint(v), obligations: Vec::new() }),
     }
 }
 
@@ -145,7 +149,7 @@ fn unify_float_variable<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
          .borrow_mut()
          .unify_var_value(vid, val)
          .map_err(|e| float_unification_error(vid_is_expected, e)));
-    Ok(infcx.tcx.mk_mach_float(val))
+    Ok(RelateOk { value: infcx.tcx.mk_mach_float(val), obligations: Vec::new() })
 }
 
 impl<'a, 'tcx> CombineFields<'a, 'tcx> {
@@ -187,11 +191,12 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                        -> RelateResult<'tcx, ()>
     {
         let mut stack = Vec::new();
+        let mut obligations = Vec::new();
         stack.push((a_ty, dir, b_vid));
         loop {
             // For each turn of the loop, we extract a tuple
             //
-            //     (a_ty, dir, b_vid)
+            //     (a_ty, dir, b_vid, obligations)
             //
             // to relate. Here dir is either SubtypeOf or
             // SupertypeOf. The idea is that we should ensure that
@@ -224,10 +229,11 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                 Some(t) => t, // ...already instantiated.
                 None => {     // ...not yet instantiated:
                     // Generalize type if necessary.
-                    let generalized_ty = try!(match dir {
-                        EqTo => self.generalize(a_ty, b_vid, false),
-                        BiTo | SupertypeOf | SubtypeOf => self.generalize(a_ty, b_vid, true),
-                    });
+                    let RelateOk { value: generalized_ty, obligations: new_obligations } =
+                        try!(match dir {
+                            EqTo => self.generalize(a_ty, b_vid, false),
+                            BiTo | SupertypeOf | SubtypeOf => self.generalize(a_ty, b_vid, true),
+                        });
                     debug!("instantiate(a_ty={:?}, dir={:?}, \
                                         b_vid={:?}, generalized_ty={:?})",
                            a_ty, dir, b_vid,
@@ -236,6 +242,8 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                         .borrow_mut()
                         .instantiate_and_push(
                             b_vid, generalized_ty, &mut stack);
+                    // Is this necessary? Do we need to normalize in the generalizer? ~soltanmm
+                    obligations.extend(new_obligations);
                     generalized_ty
                 }
             };
@@ -255,7 +263,7 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
             });
         }
 
-        Ok(())
+        Ok(RelateOk { value: (), obligations: obligations })
     }
 
     /// Attempts to generalize `ty` for the type variable `for_vid`.  This checks for cycle -- that
@@ -273,13 +281,17 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
             span: self.trace.origin.span(),
             for_vid: for_vid,
             make_region_vars: make_region_vars,
-            cycle_detected: false
+            cycle_detected: false,
+            obligations: Vec::new(),
         };
         let u = ty.fold_with(&mut generalize);
         if generalize.cycle_detected {
             Err(TypeError::CyclicTy)
         } else {
-            Ok(u)
+            Ok(RelateOk{
+                value: u,
+                obligations: mem::replace(&mut generalize.obligations, Vec::new())
+            })
         }
     }
 }
@@ -290,6 +302,7 @@ struct Generalizer<'cx, 'tcx:'cx> {
     for_vid: ty::TyVid,
     make_region_vars: bool,
     cycle_detected: bool,
+    obligations: Vec<traits::PredicateObligation<'tcx>>,
 }
 
 impl<'cx, 'tcx> ty::fold::TypeFolder<'tcx> for Generalizer<'cx, 'tcx> {
@@ -370,7 +383,7 @@ impl<'tcx, T:Clone + PartialEq> RelateResultCompare<'tcx, T> for RelateResult<'t
         F: FnOnce() -> TypeError<'tcx>,
     {
         self.clone().and_then(|s| {
-            if s == t {
+            if s.value == t {
                 self.clone()
             } else {
                 Err(f())

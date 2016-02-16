@@ -33,7 +33,7 @@ use middle::ty::{TyVid, IntVid, FloatVid};
 use middle::ty::{self, Ty};
 use middle::ty::error::{ExpectedFound, TypeError, UnconstrainedNumeric};
 use middle::ty::fold::{TypeFolder, TypeFoldable};
-use middle::ty::relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::relate::{Relate, RelateOk, TypeRelation};
 use rustc_data_structures::unify::{self, UnificationTable};
 use std::cell::{RefCell, Ref};
 use std::fmt;
@@ -64,7 +64,7 @@ pub mod type_variable;
 pub mod unify_key;
 
 pub type Bound<T> = Option<T>;
-pub type UnitResult<'tcx> = RelateResult<'tcx, ()>; // "unify result"
+pub type UnitResult<'tcx> = Result<(), TypeError<'tcx>>; // "unify result"
 pub type FixupResult<T> = Result<T, FixupError>; // "fixup result"
 
 pub struct InferCtxt<'a, 'tcx: 'a> {
@@ -385,7 +385,7 @@ pub fn common_supertype<'a, 'tcx>(cx: &InferCtxt<'a, 'tcx>,
                                   a_is_expected: bool,
                                   a: Ty<'tcx>,
                                   b: Ty<'tcx>)
-                                  -> Ty<'tcx>
+                                  -> RelateOk<'tcx, Ty<'tcx>>
 {
     debug!("common_supertype({:?}, {:?})",
            a, b);
@@ -400,7 +400,7 @@ pub fn common_supertype<'a, 'tcx>(cx: &InferCtxt<'a, 'tcx>,
         Ok(t) => t,
         Err(ref err) => {
             cx.report_and_explain_type_error(trace, err);
-            cx.tcx.types.err
+            RelateOk { value: cx.tcx.types.err, obligations: Vec::new() }
         }
     }
 }
@@ -412,6 +412,7 @@ pub fn mk_subty<'a, 'tcx>(cx: &InferCtxt<'a, 'tcx>,
                           b: Ty<'tcx>)
                           -> UnitResult<'tcx>
 {
+    // does this need to be returning obligations instead of unit?
     debug!("mk_subty({:?} <: {:?})", a, b);
     cx.sub_types(a_is_expected, origin, a, b)
 }

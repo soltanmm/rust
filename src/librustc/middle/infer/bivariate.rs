@@ -30,7 +30,7 @@ use super::type_variable::{BiTo};
 
 use middle::ty::{self, Ty};
 use middle::ty::TyVar;
-use middle::ty::relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::relate::{Relate, RelateOk, RelateResult, TypeRelation};
 
 pub struct Bivariate<'a, 'tcx: 'a> {
     fields: CombineFields<'a, 'tcx>
@@ -74,7 +74,7 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         debug!("{}.tys({:?}, {:?})", self.tag(),
                a, b);
-        if a == b { return Ok(a); }
+        if a == b { return Ok(RelateOk { value: a, obligations: Vec::new() }); }
 
         let infcx = self.fields.infcx;
         let a = infcx.type_variables.borrow().replace_if_possible(a);
@@ -82,17 +82,19 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
         match (&a.sty, &b.sty) {
             (&ty::TyInfer(TyVar(a_id)), &ty::TyInfer(TyVar(b_id))) => {
                 infcx.type_variables.borrow_mut().relate_vars(a_id, BiTo, b_id);
-                Ok(a)
+                Ok(RelateOk { value: a, obligations: Vec::new() })
             }
 
             (&ty::TyInfer(TyVar(a_id)), _) => {
-                try!(self.fields.instantiate(b, BiTo, a_id));
-                Ok(a)
+                let RelateOk { obligations, .. } =
+                    try!(self.fields.instantiate(b, BiTo, a_id));
+                Ok(RelateOk { value: a, obligations: obligations })
             }
 
             (_, &ty::TyInfer(TyVar(b_id))) => {
-                try!(self.fields.instantiate(a, BiTo, b_id));
-                Ok(a)
+                let RelateOk { obligations, .. } =
+                    try!(self.fields.instantiate(a, BiTo, b_id));
+                Ok(RelateOk { value: a, obligations: obligations })
             }
 
             _ => {
@@ -102,7 +104,7 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
     }
 
     fn regions(&mut self, a: ty::Region, _: ty::Region) -> RelateResult<'tcx, ty::Region> {
-        Ok(a)
+        Ok(RelateOk { value: a, obligations: Vec::new() })
     }
 
     fn binders<T>(&mut self, a: &ty::Binder<T>, b: &ty::Binder<T>)
@@ -111,7 +113,7 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
     {
         let a1 = self.tcx().erase_late_bound_regions(a);
         let b1 = self.tcx().erase_late_bound_regions(b);
-        let c = try!(self.relate(&a1, &b1));
-        Ok(ty::Binder(c))
+        let RelateOk { value: c, obligations } = try!(self.relate(&a1, &b1));
+        Ok(RelateOk { value: ty::Binder(c), obligations: obligations })
     }
 }

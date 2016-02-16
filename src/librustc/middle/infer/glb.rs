@@ -15,7 +15,7 @@ use super::lattice::{self, LatticeDir};
 use super::Subtype;
 
 use middle::ty::{self, Ty};
-use middle::ty::relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::relate::{Relate, RelateOk, RelateResult, TypeRelation};
 
 /// "Greatest lower bound" (common subtype)
 pub struct Glb<'a, 'tcx: 'a> {
@@ -60,7 +60,10 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Glb<'a, 'tcx> {
                b);
 
         let origin = Subtype(self.fields.trace.clone());
-        Ok(self.fields.infcx.region_vars.glb_regions(origin, a, b))
+        Ok(RelateOk {
+            value: self.fields.infcx.region_vars.glb_regions(origin, a, b),
+            obligations: Vec::new()
+        })
     }
 
     fn binders<T>(&mut self, a: &ty::Binder<T>, b: &ty::Binder<T>)
@@ -78,8 +81,10 @@ impl<'a, 'tcx> LatticeDir<'a,'tcx> for Glb<'a, 'tcx> {
 
     fn relate_bound(&self, v: Ty<'tcx>, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, ()> {
         let mut sub = self.fields.sub();
-        try!(sub.relate(&v, &a));
-        try!(sub.relate(&v, &b));
-        Ok(())
+        let RelateOk { obligations: a_obli, .. } = try!(sub.relate(&v, &a));
+        let RelateOk { obligations: b_obli, .. } = try!(sub.relate(&v, &b));
+        let mut obligations = a_obli;
+        obligations.extend(b_obli);
+        Ok(RelateOk { value: (), obligations: obligations })
     }
 }
