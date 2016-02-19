@@ -99,6 +99,10 @@ pub struct InferCtxt<'a, 'tcx: 'a> {
     // directly.
     normalize: bool,
 
+    // The set of types we are normalizing *right now*. If we are already normalizing a type, then
+    // we don't want to be normalizing it nested ad infinitum.
+    active_normalizing_set: RefCell<FnvHashSet<ty::Ty<'tcx>>>,
+
     err_count_on_creation: usize,
 }
 
@@ -366,6 +370,7 @@ pub fn new_infer_ctxt<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
         parameter_environment: param_env.unwrap_or(tcx.empty_parameter_environment()),
         reported_trait_errors: RefCell::new(FnvHashSet()),
         normalize: false,
+        active_normalizing_set: RefCell::new(FnvHashSet()),
         err_count_on_creation: tcx.sess.err_count()
     }
 }
@@ -1541,9 +1546,28 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
     {
         debug!("normalize_if_possible({:?})", a);
         if let ty::TyProjection(..) = a.sty {
-            traits::normalize(&mut traits::SelectionContext::new(self),
-                              traits::ObligationCause::dummy(),
-                              &a)
+            let is_nested = self.active_normalizing_set.borrow().contains(&a);
+            if is_nested {
+                traits::Normalized { value: a, obligations: Vec::new() }
+            } else {
+                self.active_normalizing_set.borrow_mut().insert(a);
+                let traits::Normalized { value, obligations } =
+                    traits::normalize(&mut traits::SelectionContext::new(self),
+                                      traits::ObligationCause::dummy(),
+                                      &a);
+                self.active_normalizing_set.borrow_mut().remove(&a);
+                // Ignore inference variables (they represent failures).
+                // FIXME there shouldn't need to be an inference variable check here. Some other
+                // projection function should exist that doesn't try to do something fancy with
+                // new inference variables.
+                traits::Normalized {
+                    value: match value.sty {
+                        ty::TyInfer(..) => a,
+                        _ => value,
+                    },
+                    obligations: obligations,
+                }
+            }
         } else {
             traits::Normalized { value: a, obligations: Vec::new() }
         }
