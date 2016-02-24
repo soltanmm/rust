@@ -150,23 +150,25 @@ pub trait TypeRelation<'a,'tcx> : Sized {
     }
 
     /// Generic relation routine suitable for most anything.
-    fn relate<T:Relate<'a,'tcx>>(&mut self, a: &T, b: &T) -> RelateResult<'tcx, T> {
+    fn relate<T: for<'x> Relate<'x,'tcx>>(&mut self, a: &T, b: &T) -> RelateResult<'tcx, T> {
         Relate::relate(self, a, b)
     }
 
     /// Relete elements of two slices pairwise.
-    fn relate_zip<T:Relate<'a,'tcx>>(&mut self, a: &[T], b: &[T]) -> RelateResult<'tcx, Vec<T>> {
+    fn relate_zip<T: for<'x> Relate<'x,'tcx>>(&mut self, a: &[T], b: &[T])
+        -> RelateResult<'tcx, Vec<T>>
+    {
         assert_eq!(a.len(), b.len());
         let tmp: Vec<_> = a.iter().zip(b).map(|(a, b)| self.relate(a, b)).collect();
         relate_result_from_iter(tmp)
     }
 
     /// Switch variance for the purpose of relating `a` and `b`.
-    fn relate_with_variance<T:Relate<'a,'tcx>>(&mut self,
-                                               variance: ty::Variance,
-                                               a: &T,
-                                               b: &T)
-                                               -> RelateResult<'tcx, T>;
+    fn relate_with_variance<T: for<'x> Relate<'x,'tcx>>(&mut self,
+                                                        variance: ty::Variance,
+                                                        a: &T,
+                                                        b: &T)
+                                                        -> RelateResult<'tcx, T>;
 
     // Overrideable relations. You shouldn't typically call these
     // directly, instead call `relate()`, which in turn calls
@@ -182,7 +184,7 @@ pub trait TypeRelation<'a,'tcx> : Sized {
 
     fn binders<T>(&mut self, a: &ty::Binder<T>, b: &ty::Binder<T>)
                   -> RelateResult<'tcx, ty::Binder<T>>
-        where T: Relate<'a,'tcx>;
+        where T: for<'x> Relate<'x,'tcx>;
 }
 
 pub trait Relate<'a,'tcx>: TypeFoldable<'tcx> {
@@ -746,7 +748,7 @@ impl<'a,'tcx:'a> Relate<'a,'tcx> for ty::Region {
 }
 
 impl<'a,'tcx:'a,T> Relate<'a,'tcx> for ty::Binder<T>
-    where T: Relate<'a,'tcx>
+    where T: for<'x> Relate<'x,'tcx>
 {
     fn relate<R>(relation: &mut R,
                  a: &ty::Binder<T>,
@@ -759,7 +761,7 @@ impl<'a,'tcx:'a,T> Relate<'a,'tcx> for ty::Binder<T>
 }
 
 impl<'a,'tcx:'a,T> Relate<'a,'tcx> for Rc<T>
-    where T: Relate<'a,'tcx>
+    where T: for<'x> Relate<'x,'tcx>
 {
     fn relate<R>(relation: &mut R,
                  a: &Rc<T>,
@@ -774,7 +776,7 @@ impl<'a,'tcx:'a,T> Relate<'a,'tcx> for Rc<T>
 }
 
 impl<'a,'tcx:'a,T> Relate<'a,'tcx> for Box<T>
-    where T: Relate<'a,'tcx>
+    where T: for<'x> Relate<'x,'tcx>
 {
     fn relate<R>(relation: &mut R,
                  a: &Box<T>,

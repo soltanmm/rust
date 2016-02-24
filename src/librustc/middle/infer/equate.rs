@@ -36,11 +36,11 @@ impl<'a, 'tcx> TypeRelation<'a,'tcx> for Equate<'a, 'tcx> {
 
     fn a_is_expected(&self) -> bool { self.fields.a_is_expected }
 
-    fn relate_with_variance<T:Relate<'a,'tcx>>(&mut self,
-                                               _: ty::Variance,
-                                               a: &T,
-                                               b: &T)
-                                               -> RelateResult<'tcx, T>
+    fn relate_with_variance<T: for<'x> Relate<'x,'tcx>>(&mut self,
+                                                        _: ty::Variance,
+                                                        a: &T,
+                                                        b: &T)
+                                                        -> RelateResult<'tcx, T>
     {
         self.relate(a, b)
     }
@@ -98,7 +98,7 @@ impl<'a, 'tcx> TypeRelation<'a,'tcx> for Equate<'a, 'tcx> {
 
     fn binders<T>(&mut self, a: &ty::Binder<T>, b: &ty::Binder<T>)
                   -> RelateResult<'tcx, ty::Binder<T>>
-        where T: Relate<'a, 'tcx>
+        where T: for<'x> Relate<'x, 'tcx>
     {
         self.fields.higher_ranked_sub(a, b)
             .and_then_with(|_| self.fields.higher_ranked_sub(b, a))

@@ -22,13 +22,13 @@ use util::nodemap::{FnvHashMap, FnvHashSet};
 
 pub trait HigherRankedRelations<'a,'tcx> {
     fn higher_ranked_sub<T>(&self, a: &Binder<T>, b: &Binder<T>) -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>;
+        where T: for<'x> Relate<'x,'tcx>;
 
     fn higher_ranked_lub<T>(&self, a: &Binder<T>, b: &Binder<T>) -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>;
+        where T: for<'x> Relate<'x,'tcx>;
 
     fn higher_ranked_glb<T>(&self, a: &Binder<T>, b: &Binder<T>) -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>;
+        where T: for<'x> Relate<'x,'tcx>;
 }
 
 trait InferCtxtExt {
@@ -42,7 +42,7 @@ trait InferCtxtExt {
 impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
     fn higher_ranked_sub<T>(&self, a: &Binder<T>, b: &Binder<T>)
                             -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>
+        where T: for<'x> Relate<'x,'tcx>
     {
         debug!("higher_ranked_sub(a={:?}, b={:?})",
                a, b);
@@ -102,7 +102,7 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
     }
 
     fn higher_ranked_lub<T>(&self, a: &Binder<T>, b: &Binder<T>) -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>
+        where T: for<'x> Relate<'x,'tcx>
     {
         // Start a snapshot so we can examine "all bindings that were
         // created as part of this type comparison".
@@ -192,7 +192,7 @@ impl<'a,'tcx> HigherRankedRelations<'a,'tcx> for CombineFields<'a,'tcx> {
     }
 
     fn higher_ranked_glb<T>(&self, a: &Binder<T>, b: &Binder<T>) -> RelateResult<'tcx, Binder<T>>
-        where T: Relate<'a,'tcx>
+        where T: for<'x> Relate<'x,'tcx>
     {
         debug!("higher_ranked_glb({:?}, {:?})",
                a, b);

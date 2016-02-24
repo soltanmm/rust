@@ -1417,7 +1417,7 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
     }
 
     pub fn can_equate<'b,T>(&'b self, a: &T, b: &T) -> UnitResult<'tcx>
-        where T: Relate<'b,'tcx> + fmt::Debug
+        where T: for<'x> Relate<'x,'tcx> + fmt::Debug
     {
         debug!("can_equate({:?}, {:?})", a, b);
         self.probe(|_| {
