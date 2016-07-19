@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::combine::CombineFields;
+use super::combine::{CombineFields, TypeRelationInInference};
 use super::SubregionOrigin;
 use super::type_variable::{SubtypeOf, SupertypeOf};
 
@@ -23,12 +23,12 @@ pub struct Sub<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     fields: CombineFields<'a, 'gcx, 'tcx>,
 }
 
-impl<'a, 'gcx, 'tcx> Sub<'a, 'gcx, 'tcx> {
-    pub fn new(f: CombineFields<'a, 'gcx, 'tcx>) -> Sub<'a, 'gcx, 'tcx> {
+impl<'a, 'gcx, 'tcx> TypeRelationInInference<'a, 'gcx, 'tcx> for Sub<'a, 'gcx, 'tcx> {
+    fn new(f: CombineFields<'a, 'gcx, 'tcx>) -> Sub<'a, 'gcx, 'tcx> {
         Sub { fields: f }
     }
 
-    pub fn obligations(self) -> PredicateObligations<'tcx> {
+    fn obligations(self) -> PredicateObligations<'tcx> {
         self.fields.obligations
     }
 }

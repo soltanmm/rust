@@ -25,20 +25,25 @@
 //! In particular, it might be enough to say (A,B) are bivariant for
 //! all (A,B).
 
-use super::combine::CombineFields;
+use super::combine::{CombineFields, TypeRelationInInference};
 use super::type_variable::{BiTo};
 
 use ty::{self, Ty, TyCtxt};
 use ty::TyVar;
 use ty::relate::{Relate, RelateResult, TypeRelation};
+use traits::PredicateObligations;
 
 pub struct Bivariate<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     fields: CombineFields<'a, 'gcx, 'tcx>
 }
 
-impl<'a, 'gcx, 'tcx> Bivariate<'a, 'gcx, 'tcx> {
-    pub fn new(fields: CombineFields<'a, 'gcx, 'tcx>) -> Bivariate<'a, 'gcx, 'tcx> {
+impl<'a, 'gcx, 'tcx> TypeRelationInInference<'a, 'gcx, 'tcx> for Bivariate<'a, 'gcx, 'tcx> {
+    fn new(fields: CombineFields<'a, 'gcx, 'tcx>) -> Bivariate<'a, 'gcx, 'tcx> {
         Bivariate { fields: fields }
+    }
+    
+    fn obligations(self) -> PredicateObligations<'tcx> {
+        self.fields.obligations
     }
 }
 

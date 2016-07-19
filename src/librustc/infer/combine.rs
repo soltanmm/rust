@@ -41,6 +41,8 @@ use super::InferCtxt;
 use super::{MiscVariable, TypeTrace};
 use super::type_variable::{RelationDir, BiTo, EqTo, SubtypeOf, SupertypeOf};
 
+use std::mem;
+
 use ty::{IntType, UintType};
 use ty::{self, Ty, TyCtxt};
 use ty::error::TypeError;
@@ -160,6 +162,20 @@ impl<'a, 'gcx, 'tcx> CombineFields<'a, 'gcx, 'tcx> {
             a_is_expected: !self.a_is_expected,
             ..(*self).clone()
         }
+    }
+
+    fn with_relation<Rel, Ret, F>(&mut self, f: F) -> Ret
+        where
+            Rel: TypeRelationInInference<'a, 'gcx, 'tcx>,
+            F: FnOnce(&mut Rel) -> Ret,
+    {
+        let mut relation = Rel::new(CombineFields {
+            obligations: mem::replace(&mut self.obligations, PredicateObligations::new()),
+            ..(*self).clone()
+        });
+        let result = f(&mut relation);
+        mem::replace(&mut self.obligations, relation.obligations());
+        result
     }
 
     pub fn equate(&self) -> Equate<'a, 'gcx, 'tcx> {
@@ -406,4 +422,9 @@ fn float_unification_error<'tcx>(a_is_expected: bool,
 {
     let (a, b) = v;
     TypeError::FloatMismatch(ty::relate::expected_found_bool(a_is_expected, &a, &b))
+}
+
+pub trait TypeRelationInInference<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+    fn new(f: CombineFields<'a, 'gcx, 'tcx>) -> Self;
+    fn obligations(self) -> PredicateObligations<'tcx>;
 }

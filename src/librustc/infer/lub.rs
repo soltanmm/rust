@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::combine::CombineFields;
+use super::combine::{CombineFields, TypeRelationInInference};
 use super::InferCtxt;
 use super::lattice::{self, LatticeDir};
 use super::Subtype;
@@ -22,12 +22,12 @@ pub struct Lub<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     fields: CombineFields<'a, 'gcx, 'tcx>
 }
 
-impl<'a, 'gcx, 'tcx> Lub<'a, 'gcx, 'tcx> {
-    pub fn new(fields: CombineFields<'a, 'gcx, 'tcx>) -> Lub<'a, 'gcx, 'tcx> {
+impl<'a, 'gcx, 'tcx> TypeRelationInInference<'a, 'gcx, 'tcx> for Lub<'a, 'gcx, 'tcx> {
+    fn new(fields: CombineFields<'a, 'gcx, 'tcx>) -> Lub<'a, 'gcx, 'tcx> {
         Lub { fields: fields }
     }
 
-    pub fn obligations(self) -> PredicateObligations<'tcx> {
+    fn obligations(self) -> PredicateObligations<'tcx> {
         self.fields.obligations
     }
 }

@@ -43,13 +43,13 @@ use errors::DiagnosticBuilder;
 use syntax_pos::{self, Span, DUMMY_SP};
 use util::nodemap::{FnvHashMap, FnvHashSet, NodeMap};
 
-use self::combine::CombineFields;
+use self::combine::{CombineFields, TypeRelationInInference};
 use self::higher_ranked::HrMatchResult;
 use self::region_inference::{RegionVarBindings, RegionSnapshot};
 use self::unify_key::ToType;
 
 pub mod bivariate;
-pub mod combine;
+mod combine;
 pub mod equate;
 pub mod error_reporting;
 pub mod glb;
